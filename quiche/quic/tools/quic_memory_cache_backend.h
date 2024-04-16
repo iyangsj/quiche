@@ -26,6 +26,11 @@ namespace quic {
 // `wget -p --save_headers <url>`
 class QuicMemoryCacheBackend : public QuicSimpleServerBackend {
  public:
+  enum ResourceFormat {
+    WGET_CACHE_FILE = 0,
+    RAW_FILE = 1,
+  };
+
   // Class to manage loading a resource file into memory.  There are
   // two uses: called by InitializeBackend to load resources
   // from files, and recursively called when said resources specify
@@ -33,6 +38,7 @@ class QuicMemoryCacheBackend : public QuicSimpleServerBackend {
   class ResourceFile {
    public:
     explicit ResourceFile(const std::string& file_name);
+    explicit ResourceFile(const std::string& file_name, const ResourceFormat format);
     ResourceFile(const ResourceFile&) = delete;
     ResourceFile& operator=(const ResourceFile&) = delete;
     virtual ~ResourceFile();
@@ -59,6 +65,7 @@ class QuicMemoryCacheBackend : public QuicSimpleServerBackend {
     absl::string_view RemoveScheme(absl::string_view url);
 
     std::string file_name_;
+    ResourceFormat format_;
     std::string file_contents_;
     absl::string_view body_;
     spdy::Http2HeaderBlock spdy_headers_;
@@ -69,6 +76,7 @@ class QuicMemoryCacheBackend : public QuicSimpleServerBackend {
   };
 
   QuicMemoryCacheBackend();
+  QuicMemoryCacheBackend(const ResourceFormat format);
   QuicMemoryCacheBackend(const QuicMemoryCacheBackend&) = delete;
   QuicMemoryCacheBackend& operator=(const QuicMemoryCacheBackend&) = delete;
   ~QuicMemoryCacheBackend() override;
@@ -150,6 +158,9 @@ class QuicMemoryCacheBackend : public QuicSimpleServerBackend {
                        const std::vector<spdy::Http2HeaderBlock>& early_hints);
 
   std::string GetKey(absl::string_view host, absl::string_view path) const;
+
+  // Cached resource format
+  ResourceFormat format_;
 
   // Cached responses.
   absl::flat_hash_map<std::string, std::unique_ptr<QuicBackendResponse>>

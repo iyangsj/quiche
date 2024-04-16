@@ -32,6 +32,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
     "generated using `wget -p --save-headers <url>`");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
+    std::string, quic_response_cache_format, "wget",
+    "Specifies the format of file in cache directory. Format can be wget, raw.");
+
+DEFINE_QUICHE_COMMAND_LINE_FLAG(
     bool, generate_dynamic_responses, false,
     "If true, then URLs which have a numeric path will send a dynamically "
     "generated response of that many bytes.");
@@ -66,7 +70,12 @@ namespace quic {
 
 std::unique_ptr<quic::QuicSimpleServerBackend>
 QuicToyServer::MemoryCacheBackendFactory::CreateBackend() {
-  auto memory_cache_backend = std::make_unique<QuicMemoryCacheBackend>();
+  QuicMemoryCacheBackend::ResourceFormat format = QuicMemoryCacheBackend::ResourceFormat::WGET_CACHE_FILE;
+  if (quiche::GetQuicheCommandLineFlag(FLAGS_quic_response_cache_format) == "raw") {
+    format = QuicMemoryCacheBackend::ResourceFormat::RAW_FILE;
+  }
+
+  auto memory_cache_backend = std::make_unique<QuicMemoryCacheBackend>(format);
   if (quiche::GetQuicheCommandLineFlag(FLAGS_generate_dynamic_responses)) {
     memory_cache_backend->GenerateDynamicResponses();
   }

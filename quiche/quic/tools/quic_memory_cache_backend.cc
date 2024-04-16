@@ -23,7 +23,10 @@ using spdy::kV3LowestPriority;
 namespace quic {
 
 QuicMemoryCacheBackend::ResourceFile::ResourceFile(const std::string& file_name)
-    : file_name_(file_name) {}
+    : file_name_(file_name), format_(ResourceFormat::WGET_CACHE_FILE) {}
+
+QuicMemoryCacheBackend::ResourceFile::ResourceFile(const std::string& file_name, const ResourceFormat format)
+    : file_name_(file_name), format_(format) {}
 
 QuicMemoryCacheBackend::ResourceFile::~ResourceFile() = default;
 
@@ -37,6 +40,15 @@ void QuicMemoryCacheBackend::ResourceFile::Read() {
   }
   file_contents_ = *maybe_file_contents;
 
+  /* RAW_FILE */ 
+  if (format_ == ResourceFormat::RAW_FILE) {
+    spdy_headers_[":status"] = "200";
+    spdy_headers_["content-length"] = absl::StrCat(file_contents_.length());
+    body_ = absl::string_view(file_contents_.data(), file_contents_.size());
+    return;
+  }
+
+  /* WGET_CACHE_FILE */
   // First read the headers.
   for (size_t start = 0; start < file_contents_.length();) {
     size_t pos = file_contents_.find('\n', start);
@@ -93,6 +105,15 @@ void QuicMemoryCacheBackend::ResourceFile::Read() {
 void QuicMemoryCacheBackend::ResourceFile::SetHostPathFromBase(
     absl::string_view base) {
   QUICHE_DCHECK(base[0] != '/') << base;
+
+  /* RAW_FILE */ 
+  if (format_ == ResourceFormat::RAW_FILE) {
+    host_ = "";
+    path_ = "/" + std::string(base);
+    return;
+  }
+
+  /* WGET_CACHE_FILE */ 
   size_t path_start = base.find_first_of('/');
   if (path_start == absl::string_view::npos) {
     host_ = std::string(base);
@@ -123,6 +144,9 @@ void QuicMemoryCacheBackend::ResourceFile::HandleXOriginalUrl() {
   absl::string_view url(x_original_url_);
   SetHostPathFromBase(RemoveScheme(url));
 }
+
+QuicMemoryCacheBackend::QuicMemoryCacheBackend(const ResourceFormat format)
+    : format_(format) {}
 
 const QuicBackendResponse* QuicMemoryCacheBackend::GetResponse(
     absl::string_view host, absl::string_view path) const {
@@ -240,7 +264,7 @@ bool QuicMemoryCacheBackend::InitializeBackend(
     return false;
   }
   for (const auto& filename : files) {
-    std::unique_ptr<ResourceFile> resource_file(new ResourceFile(filename));
+    std::unique_ptr<ResourceFile> resource_file(new ResourceFile(filename, format_));
 
     // Tease apart filename into host and path.
     std::string base(resource_file->file_name());
@@ -357,8 +381,10 @@ void QuicMemoryCacheBackend::AddResponseImpl(
     const std::vector<spdy::Http2HeaderBlock>& early_hints) {
   QuicWriterMutexLock lock(&response_mutex_);
 
-  QUICHE_DCHECK(!host.empty())
-      << "Host must be populated, e.g. \"www.google.com\"";
+  if (format_ != ResourceFormat::RAW_FILE) {
+    QUICHE_DCHECK(!host.empty())
+        << "Host must be populated, e.g. \"www.google.com\"";
+  }
   std::string key = GetKey(host, path);
   if (responses_.contains(key)) {
     QUIC_BUG(quic_bug_10932_3)
@@ -379,6 +405,12 @@ void QuicMemoryCacheBackend::AddResponseImpl(
 
 std::string QuicMemoryCacheBackend::GetKey(absl::string_view host,
                                            absl::string_view path) const {
+  /* RAW_FILE */
+  if (format_ == ResourceFormat::RAW_FILE) {
+    return std::string(path);
+  }
+
+  /* WGET_CACHE_FILE */
   std::string host_string = std::string(host);
   size_t port = host_string.find(':');
   if (port != std::string::npos)
