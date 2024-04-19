@@ -29,10 +29,12 @@ SendAlgorithmInterface* SendAlgorithmInterface::Create(
   switch (congestion_control_type) {
     case kGoogCC:  // GoogCC is not supported by quic/core, fall back to BBR.
     case kBBR:
+      QUIC_LOG(INFO) << "Use BBR congestion control algorithm";
       return new BbrSender(clock->ApproximateNow(), rtt_stats, unacked_packets,
                            initial_congestion_window, max_congestion_window,
                            random, stats);
     case kBBRv2:
+      QUIC_LOG(INFO) << "Use BBRv2 congestion control algorithm";
       return new Bbr2Sender(
           clock->ApproximateNow(), rtt_stats, unacked_packets,
           initial_congestion_window, max_congestion_window, random, stats,
@@ -44,10 +46,12 @@ SendAlgorithmInterface* SendAlgorithmInterface::Create(
       // PCC is currently not supported, fall back to CUBIC instead.
       ABSL_FALLTHROUGH_INTENDED;
     case kCubicBytes:
+      QUIC_LOG(INFO) << "Use Cubic congestion control algorithm";
       return new TcpCubicSenderBytes(
           clock, rtt_stats, false /* don't use Reno */,
           initial_congestion_window, max_congestion_window, stats);
     case kRenoBytes:
+      QUIC_LOG(INFO) << "Use Reno congestion control algorithm";
       return new TcpCubicSenderBytes(clock, rtt_stats, true /* use Reno */,
                                      initial_congestion_window,
                                      max_congestion_window, stats);

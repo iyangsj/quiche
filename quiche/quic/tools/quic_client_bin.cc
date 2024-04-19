@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
   // All non-flag arguments should be interpreted as URLs to fetch.
   std::vector<std::string> urls =
       quiche::QuicheParseCommandLineFlags(usage, argc, argv);
-  if (urls.size() != 1) {
+  if (urls.size() < 1) {
     quiche::QuichePrintCommandLineFlagHelp(usage);
     exit(0);
   }

@@ -45,6 +45,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
     "QUIC versions to enable, e.g. \"h3-25,h3-27\". If not set, then all "
     "available versions are enabled.");
 
+DEFINE_QUICHE_COMMAND_LINE_FLAG(
+    std::string, quic_congestion_control, "",
+    "Specifies the congestion_control algorithm. algorithm can be cubic, bbr, bbrv2");
+
 DEFINE_QUICHE_COMMAND_LINE_FLAG(bool, enable_webtransport, false,
                                 "If true, WebTransport support is enabled.");
 
@@ -148,6 +152,16 @@ int QuicToyServer::Start() {
   for (const auto& version : supported_versions) {
     QuicEnableVersion(version);
   }
+
+  // Set default congestion control algorithm
+  std::string congestion_string =
+      quiche::GetQuicheCommandLineFlag(FLAGS_quic_congestion_control);
+  if (congestion_string == "bbr") {
+    FLAGS_quic_reloadable_flag_quic_default_to_bbr = true;
+  } else if (congestion_string == "bbrv2"){
+    FLAGS_quic_reloadable_flag_quic_default_to_bbr_v2 = true;
+  }
+
   auto proof_source = quic::CreateDefaultProofSource();
   auto backend = backend_factory_->CreateBackend();
   auto server = server_factory_->CreateServer(

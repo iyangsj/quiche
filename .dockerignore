@@ -1,4 +1,9 @@
-bazel*
+bazel-bin/
+!bazel-bin/quiche/quic_client
+!bazel-bin/quiche/quic_server
+bazel-out/
+bazel-quiche/
+bazel-testlogs/ 
 build/
 .git/
 .github/

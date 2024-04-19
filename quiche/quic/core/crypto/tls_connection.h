@@ -5,6 +5,8 @@
 #ifndef QUICHE_QUIC_CORE_CRYPTO_TLS_CONNECTION_H_
 #define QUICHE_QUIC_CORE_CRYPTO_TLS_CONNECTION_H_
 
+#include <fstream>
+#include <iostream>
 #include <vector>
 
 #include "absl/strings/string_view.h"
@@ -150,6 +152,9 @@ class QUICHE_EXPORT TlsConnection {
                                uint8_t desc);
   static void MessageCallback(int is_write, int version, int content_type,
                               const void* buf, size_t len, SSL* ssl, void* arg);
+
+  // Write out SSL key logs
+  static void KeylogCallback(const SSL *ssl, const char *line);
 
   Delegate* delegate_;
   bssl::UniquePtr<SSL> ssl_;

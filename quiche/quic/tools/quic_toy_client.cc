@@ -111,6 +111,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
     "such as Q043 or T099.");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
+    std::string, quic_congestion_control, "",
+    "Specifies the congestion_control algorithm. algorithm can be cubic, bbr, bbrv2");
+
+DEFINE_QUICHE_COMMAND_LINE_FLAG(
     std::string, connection_options, "",
     "Connection options as ASCII tags separated by commas, "
     "e.g. \"ABCD,EFGH\"");
@@ -169,6 +173,10 @@ DEFINE_QUICHE_COMMAND_LINE_FLAG(
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
     bool, drop_response_body, false,
     "If true, drop response body immediately after it is received.");
+
+DEFINE_QUICHE_COMMAND_LINE_FLAG(
+    std::string, quic_response_output_dir, "",
+    "The path to the file to save response body");
 
 DEFINE_QUICHE_COMMAND_LINE_FLAG(
     bool, disable_port_changes, false,
@@ -283,8 +291,15 @@ int QuicToyClient::SendRequestsAndPrintResponses(
                     quic::QuicVersionReservedForNegotiation());
   }
 
-  const int32_t num_requests(
+
+  const int num_url = urls.size();
+
+  int32_t num_requests(
       quiche::GetQuicheCommandLineFlag(FLAGS_num_requests));
+  if (num_requests < num_url) {
+    num_requests = num_url;
+  }
+
   std::unique_ptr<quic::ProofVerifier> proof_verifier;
   if (quiche::GetQuicheCommandLineFlag(
           FLAGS_disable_certificate_verification)) {
@@ -296,6 +311,15 @@ int QuicToyClient::SendRequestsAndPrintResponses(
   if (num_requests > 1 &&
       quiche::GetQuicheCommandLineFlag(FLAGS_one_connection_per_request)) {
     session_cache = std::make_unique<QuicClientSessionCache>();
+  }
+
+  // Set default congestion control algorithm
+  std::string congestion_string =
+      quiche::GetQuicheCommandLineFlag(FLAGS_quic_congestion_control);
+  if (congestion_string == "bbr") {
+    FLAGS_quic_reloadable_flag_quic_default_to_bbr = true;
+  } else if (congestion_string == "bbrv2") {
+    FLAGS_quic_reloadable_flag_quic_default_to_bbr_v2 = true;
   }
 
   QuicConfig config;
@@ -437,24 +461,31 @@ int QuicToyClient::SendRequestsAndPrintResponses(
   }
 
   // Construct a GET or POST request for supplied URL.
-  spdy::Http2HeaderBlock header_block;
-  header_block[":method"] = body.empty() ? "GET" : "POST";
-  header_block[":scheme"] = url.scheme();
-  header_block[":authority"] = url.HostPort();
-  header_block[":path"] = url.PathParamsQuery();
+  std::vector<spdy::Http2HeaderBlock> header_blocks;
+  for (std::string url_str: urls) {
+    QuicUrl url(url_str, "https");
 
-  // Append any additional headers supplied on the command line.
-  const std::string headers = quiche::GetQuicheCommandLineFlag(FLAGS_headers);
-  for (absl::string_view sp : absl::StrSplit(headers, ';')) {
-    QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&sp);
-    if (sp.empty()) {
-      continue;
+    spdy::Http2HeaderBlock header_block;
+    header_block[":method"] = body.empty() ? "GET" : "POST";
+    header_block[":scheme"] = url.scheme();
+    header_block[":authority"] = url.HostPort();
+    header_block[":path"] = url.PathParamsQuery();
+
+    // Append any additional headers supplied on the command line.
+    const std::string headers = quiche::GetQuicheCommandLineFlag(FLAGS_headers);
+    for (absl::string_view sp : absl::StrSplit(headers, ';')) {
+      QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&sp);
+      if (sp.empty()) {
+        continue;
+      }
+      std::vector<absl::string_view> kv =
+          absl::StrSplit(sp, absl::MaxSplits(':', 1));
+      QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[0]);
+      QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[1]);
+      header_block[kv[0]] = kv[1];
     }
-    std::vector<absl::string_view> kv =
-        absl::StrSplit(sp, absl::MaxSplits(':', 1));
-    QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[0]);
-    QuicheTextUtils::RemoveLeadingAndTrailingWhitespace(&kv[1]);
-    header_block[kv[0]] = kv[1];
+
+    header_blocks.push_back(std::move(header_block));
   }
 
   // Make sure to store the response, for later output.
@@ -462,12 +493,13 @@ int QuicToyClient::SendRequestsAndPrintResponses(
 
   for (int i = 0; i < num_requests; ++i) {
     // Send the request.
-    client->SendRequestAndWaitForResponse(header_block, body, /*fin=*/true);
+    client->SendRequestAndWaitForResponse(header_blocks[i % num_url], body, /*fin=*/true);
 
     // Print request and response details.
+    std::string response_body = client->latest_response_body();
     if (!quiche::GetQuicheCommandLineFlag(FLAGS_quiet)) {
       std::cout << "Request:" << std::endl;
-      std::cout << "headers:" << header_block.DebugString();
+      std::cout << "headers:" << header_blocks[i % num_url].DebugString();
       if (!quiche::GetQuicheCommandLineFlag(FLAGS_body_hex).empty()) {
         // Print the user provided hex, rather than binary body.
         std::cout << "body:\n" << QuicheTextUtils::HexDump(body) << std::endl;
@@ -485,7 +517,6 @@ int QuicToyClient::SendRequestsAndPrintResponses(
       std::cout << "Response:" << std::endl;
       std::cout << "headers: " << client->latest_response_headers()
                 << std::endl;
-      std::string response_body = client->latest_response_body();
       if (!quiche::GetQuicheCommandLineFlag(FLAGS_body_hex).empty()) {
         // Assume response is binary data.
         std::cout << "body:\n"
@@ -500,6 +531,21 @@ int QuicToyClient::SendRequestsAndPrintResponses(
       QUIC_LOG(INFO) << "Request completed with TTFB(us): "
                      << client->latest_ttfb().ToMicroseconds() << ", TTLB(us): "
                      << client->latest_ttlb().ToMicroseconds();
+    }
+
+    /// Save resposne body to file
+    std::string dir = quiche::GetQuicheCommandLineFlag(FLAGS_quic_response_output_dir);
+    if (!dir.empty()) {
+        QuicUrl url(urls[i % num_url], "https");
+        std::string filename = dir + "/" + url.path();
+        std::ofstream outfile(filename);
+        if (outfile.is_open()) {
+            outfile << response_body;
+            outfile.close();
+            QUIC_LOG(INFO) << "Save repsonse to file " << filename << " successfully." << std::endl;
+        } else {
+            QUIC_LOG(INFO) << "Unable to write file: " << filename << std::endl;
+        }
     }
 
     if (!client->connected()) {
@@ -558,6 +604,8 @@ int QuicToyClient::SendRequestsAndPrintResponses(
       }
     }
   }
+  QUIC_LOG(INFO) << "Finish process " << num_requests << " requests." << std::endl;
+  client->Disconnect();
 
   return 0;
 }
